@@ -18,6 +18,6 @@ public interface IFileStorage : IDisposable
     void ForceCleanup();
     void ForceCleanupOldFiles(int HoursAgo = 24);
     void RebuildIndexManually();
-    void TestFileDeletion(string FileId);
+    //void TestFileDeletion(string FileId);
     void CleanupOrphanedReferences();
 }
