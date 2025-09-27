@@ -12,7 +12,7 @@ using System.Text.Json.Serialization;
 using System.Linq;
 using System.Buffers;
 
-public sealed class FileStorage : IDisposable
+public sealed class FileStorage : IFileStorage
 {
     private readonly string _StoragePath;
     private readonly uint _DeleteEveryMinutes;
