@@ -995,38 +995,150 @@ public sealed class FileStorage : IFileStorage
         return oEx is IOException || oEx is UnauthorizedAccessException;
     }
 
+    //private void LogMessage(string sMessage)
+    //{
+    //    string sLogEntry = $"UtcTime:{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}=>LocalTime:{DateTime.Now:yyyy-MM-dd HH:mm:ss}: {sMessage}{Environment.NewLine}";
+    //    int EntrySize = Encoding.UTF8.GetByteCount(sLogEntry);
+    //    if (Interlocked.Increment(ref _LogEntriesSinceLastCheck) >= _LogCheckInterval)
+    //    {
+    //        CheckAndRotateLog();
+    //    }
+    //    const int MaxRetries = 2;
+    //    const int iBaseDelayMs = 100;
+    //    for (int iAttempt = 0; iAttempt < MaxRetries; iAttempt++)
+    //    {
+    //        try
+    //        {
+    //            using var oFs = new FileStream(
+    //                _LogFilePath,
+    //                FileMode.Append,
+    //                FileAccess.Write,
+    //                FileShare.Read,
+    //                bufferSize: 8192,
+    //                options: FileOptions.SequentialScan);
+    //            using var oWriter = new StreamWriter(oFs, Encoding.UTF8);
+    //            oWriter.Write(sLogEntry);
+    //            oWriter.Flush();
+    //            Interlocked.Add(ref _CurrentLogFileSize, EntrySize);
+    //            return;
+    //        }
+    //        catch (Exception ex)
+    //        {
+    //            bool bIsFileNotFound = ex is FileNotFoundException || (ex is IOException && ex.Message.Contains("Could not find")) ||
+    //                                  (ex is IOException && ex.Message.Contains("The system cannot find the file"));
+
+    //            if (bIsFileNotFound)
+    //            {
+    //                try
+    //                {
+    //                    string NewLogHeader = $"Log File Created At UtcTime {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} LocalTime {DateTime.Now:yyyy-MM-dd HH:mm:ss}{Environment.NewLine}";
+    //                    File.WriteAllText(_LogFilePath, NewLogHeader, Encoding.UTF8);
+    //                    Interlocked.Exchange(ref _CurrentLogFileSize, Encoding.UTF8.GetByteCount(NewLogHeader));
+    //                    Thread.Sleep(iBaseDelayMs);
+    //                }
+    //                catch
+    //                {
+    //                    return;
+    //                }
+    //            }
+    //            else if (iAttempt == MaxRetries - 1)
+    //            {
+    //                return;
+    //            }
+    //            else
+    //            {
+    //                Thread.Sleep(iBaseDelayMs * (iAttempt + 1));
+    //            }
+    //        }
+    //    }
+    //}
+    //private void LogMessage(string sMessage)
+    //{
+    //    string sLogEntry = $"UtcTime:{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}=>LocalTime:{DateTime.Now:yyyy-MM-dd HH:mm:ss}: {sMessage}{Environment.NewLine}";
+    //    int EntrySize = Encoding.UTF8.GetByteCount(sLogEntry);
+    //    if (Interlocked.Increment(ref _LogEntriesSinceLastCheck) >= _LogCheckInterval)
+    //    {
+    //        CheckAndRotateLog();
+    //    }
+    //    const int MaxRetries = 2;
+    //    const int iBaseDelayMs = 100;
+    //    int iAttempt = 0;
+    //Retry:
+    //    try
+    //    {
+    //        using var oFs = new FileStream(
+    //            _LogFilePath,
+    //            FileMode.Append,
+    //            FileAccess.Write,
+    //            FileShare.Read,
+    //            bufferSize: 8192,
+    //            options: FileOptions.SequentialScan);
+    //        using var oWriter = new StreamWriter(oFs, Encoding.UTF8);
+    //        oWriter.Write(sLogEntry);
+    //        oWriter.Flush();
+    //        Interlocked.Add(ref _CurrentLogFileSize, EntrySize);
+    //        return;
+    //    }
+    //    catch (Exception oEx)
+    //    {
+    //        bool bIsFileNotFound = oEx is FileNotFoundException || (oEx is IOException && oEx.Message.Contains("Could not find")) || (oEx is IOException && oEx.Message.Contains("The system cannot find the file"));
+    //        if (bIsFileNotFound)
+    //        {
+    //            try
+    //            {
+    //                string NewLogHeader = $"Log File Created At UtcTime {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} LocalTime {DateTime.Now:yyyy-MM-dd HH:mm:ss}{Environment.NewLine}";
+    //                File.WriteAllText(_LogFilePath, NewLogHeader, Encoding.UTF8);
+    //                Interlocked.Exchange(ref _CurrentLogFileSize, Encoding.UTF8.GetByteCount(NewLogHeader));
+    //                Thread.Sleep(iBaseDelayMs);
+    //            }
+    //            catch
+    //            {
+    //                return;
+    //            }
+    //        }
+    //        iAttempt++;
+    //        if (iAttempt >= MaxRetries)
+    //        {
+    //            return;
+    //        }
+
+    //        if (!bIsFileNotFound)
+    //        {
+    //            Thread.Sleep(iBaseDelayMs * iAttempt);
+    //        }
+    //        goto Retry;
+    //    }
+    //}
     private void LogMessage(string sMessage)
     {
         string sLogEntry = $"UtcTime:{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}=>LocalTime:{DateTime.Now:yyyy-MM-dd HH:mm:ss}: {sMessage}{Environment.NewLine}";
-        int entrySize = Encoding.UTF8.GetByteCount(sLogEntry);
+        int EntrySize = Encoding.UTF8.GetByteCount(sLogEntry);
         if (Interlocked.Increment(ref _LogEntriesSinceLastCheck) >= _LogCheckInterval)
         {
             CheckAndRotateLog();
         }
-        const int iMaxRetries = 2;
+        const int MaxRetries = 2;
         const int iBaseDelayMs = 100;
-        for (int iAttempt = 0; iAttempt < iMaxRetries; iAttempt++)
+        void TryWriteLog(int iAttempt)
         {
             try
             {
-                using var fs = new FileStream(
+                using var oFs = new FileStream(
                     _LogFilePath,
                     FileMode.Append,
                     FileAccess.Write,
                     FileShare.Read,
                     bufferSize: 8192,
                     options: FileOptions.SequentialScan);
-                using var oWriter = new StreamWriter(fs, Encoding.UTF8);
+                using var oWriter = new StreamWriter(oFs, Encoding.UTF8);
                 oWriter.Write(sLogEntry);
                 oWriter.Flush();
-                Interlocked.Add(ref _CurrentLogFileSize, entrySize);
+                Interlocked.Add(ref _CurrentLogFileSize, EntrySize);
                 return;
             }
-            catch (Exception ex)
+            catch (Exception oEx)
             {
-                bool bIsFileNotFound = ex is FileNotFoundException || (ex is IOException && ex.Message.Contains("Could not find")) ||
-                                      (ex is IOException && ex.Message.Contains("The system cannot find the file"));
-
+                bool bIsFileNotFound = oEx is FileNotFoundException || (oEx is IOException && oEx.Message.Contains("Could not find")) || (oEx is IOException && oEx.Message.Contains("The system cannot find the file"));
                 if (bIsFileNotFound)
                 {
                     try
@@ -1041,28 +1153,29 @@ public sealed class FileStorage : IFileStorage
                         return;
                     }
                 }
-                else if (iAttempt == iMaxRetries - 1)
+                if (iAttempt >= MaxRetries - 1)
                 {
                     return;
                 }
-                else
+                if (!bIsFileNotFound)
                 {
                     Thread.Sleep(iBaseDelayMs * (iAttempt + 1));
                 }
+                TryWriteLog(iAttempt + 1);
             }
         }
+        TryWriteLog(0);
     }
-
     private void CheckAndRotateLog()
     {
         Interlocked.Exchange(ref _LogEntriesSinceLastCheck, 0);
-        long currentSize = Interlocked.Read(ref _CurrentLogFileSize);
-        if (currentSize < _LogRotationThreshold)
+        long CurrentSize = Interlocked.Read(ref _CurrentLogFileSize);
+        if (CurrentSize < _LogRotationThreshold)
             return;
         lock (_LogRotationLock)
         {
-            currentSize = Interlocked.Read(ref _CurrentLogFileSize);
-            if (currentSize < _LogRotationThreshold)
+            CurrentSize = Interlocked.Read(ref _CurrentLogFileSize);
+            if (CurrentSize < _LogRotationThreshold)
                 return;
 
             try
@@ -1074,9 +1187,9 @@ public sealed class FileStorage : IFileStorage
                 {
                     File.Move(_LogFilePath, BackupFilePath);
                 }
-                string newLogHeader = $"Log File Created At UtcTime {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} LocalTime {DateTime.Now:yyyy-MM-dd HH:mm:ss}{Environment.NewLine}";
-                File.WriteAllText(_LogFilePath, newLogHeader, Encoding.UTF8);
-                Interlocked.Exchange(ref _CurrentLogFileSize, Encoding.UTF8.GetByteCount(newLogHeader));
+                string NewLogHeader = $"Log File Created At UtcTime {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} LocalTime {DateTime.Now:yyyy-MM-dd HH:mm:ss}{Environment.NewLine}";
+                File.WriteAllText(_LogFilePath, NewLogHeader, Encoding.UTF8);
+                Interlocked.Exchange(ref _CurrentLogFileSize, Encoding.UTF8.GetByteCount(NewLogHeader));
                 if (Interlocked.Increment(ref _RotationCount) % _BackupFileRotationCleanUp == 0)
                 {
                     CleanupOldLogBackups();
