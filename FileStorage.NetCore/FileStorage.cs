@@ -165,7 +165,7 @@ public sealed class FileStorage : IFileStorage
                 }
                 else
                 {
-                    LogMessage("Index file not found. Rebuilding from existing files.");
+                    LogMessage("Index file not found. Rebuilding from existing files");
                     RebuildIndex();
                 }
             }
@@ -375,7 +375,7 @@ public sealed class FileStorage : IFileStorage
         catch (Exception ex)
         {
             throw new Exception(
-                $"The application does not have write/delete permissions on the storage path: {_StoragePath}. " +
+                $"The application does not have write/delete permissions on the storage path: {_StoragePath} " +
                 $"Please grant 'Modify' permissions. Error: {ex.Message}", ex);
         }
     }
@@ -405,7 +405,7 @@ public sealed class FileStorage : IFileStorage
         }
         catch (FileNotFoundException ex)
         {
-            throw new FileNotFoundException("File not found.", sFilePath, ex);
+            throw new FileNotFoundException("File not found", sFilePath, ex);
         }
     }
 
@@ -428,7 +428,7 @@ public sealed class FileStorage : IFileStorage
         }
         catch (FileNotFoundException ex)
         {
-            throw new FileNotFoundException("File not found.", sFilePath, ex);
+            throw new FileNotFoundException("File not found", sFilePath, ex);
         }
     }
 
@@ -438,7 +438,7 @@ public sealed class FileStorage : IFileStorage
         var sFilePath = GetFilePath(gFileId);
         var lFileSize = new FileInfo(sFilePath).Length;
         if (lFileSize > _MaxFileSize)
-            throw new IOException($"File is too large to load into memory (max {_MaxFileSize} bytes).");
+            throw new IOException($"File is too large to load into memory (max {_MaxFileSize} bytes)");
         IncrementRef(gFileId);
         try
         {
@@ -469,7 +469,7 @@ public sealed class FileStorage : IFileStorage
         var sFilePath = GetFilePath(gFileId);
         var lFileSize = new FileInfo(sFilePath).Length;
         if (lFileSize > _MaxFileSize)
-            throw new IOException($"File is too large to load into memory (max {_MaxFileSize} bytes).");
+            throw new IOException($"File is too large to load into memory (max {_MaxFileSize} bytes)");
         IncrementRef(gFileId);
         try
         {
@@ -502,7 +502,7 @@ public sealed class FileStorage : IFileStorage
         {
             int read = stream.Read(buffer, bytesRead, (int)(fileSize - bytesRead));
             if (read == 0)
-                throw new IOException("File read incomplete.");
+                throw new IOException("File read incomplete");
             bytesRead += read;
         }
         return buffer;
@@ -516,7 +516,7 @@ public sealed class FileStorage : IFileStorage
         {
             int read = await stream.ReadAsync(buffer.AsMemory(bytesRead, (int)(fileSize - bytesRead)), ct).ConfigureAwait(false);
             if (read == 0)
-                throw new IOException("File read incomplete.");
+                throw new IOException("File read incomplete");
             bytesRead += read;
         }
         return buffer;
@@ -537,7 +537,7 @@ public sealed class FileStorage : IFileStorage
             throw new ArgumentNullException(nameof(oStream));
         long lFileSize = lKnownLength ?? (oStream.CanSeek ? oStream.Length : _MaxFileSize);
         if (lFileSize > _MaxFileSize)
-            throw new IOException($"File size exceeds maximum allowed size of {_MaxFileSize} bytes.");
+            throw new IOException($"File size exceeds maximum allowed size of {_MaxFileSize} bytes");
         EnsureDiskSpace(lFileSize);
         var gFileId = Guid.NewGuid();
         var sTempPath = GetTempPath(gFileId);
@@ -581,7 +581,7 @@ public sealed class FileStorage : IFileStorage
             throw new ArgumentNullException(nameof(oStream));
         long lFileSize = lKnownLength ?? (oStream.CanSeek ? oStream.Length : _MaxFileSize);
         if (lFileSize > _MaxFileSize)
-            throw new IOException($"File size exceeds maximum allowed size of {_MaxFileSize} bytes.");
+            throw new IOException($"File size exceeds maximum allowed size of {_MaxFileSize} bytes");
         EnsureDiskSpace(lFileSize);
         var gFileId = Guid.NewGuid();
         var sTempPath = GetTempPath(gFileId);
@@ -936,12 +936,12 @@ public sealed class FileStorage : IFileStorage
             Interlocked.Exchange(ref _LastDiskCheckTime, lNow);
             long lRequiredWithBuffer = (long)(lRequiredSpace * (1 + _FreeSpaceBufferRatio));
             if (lCurrentFreeSpace < lRequiredWithBuffer)
-                throw new IOException("Not enough disk space available.");
+                throw new IOException("Not enough disk space available");
         }
         catch (Exception ex)
         {
             LogMessage($"Failed to check disk space: {ex}");
-            throw new IOException("Failed to check disk space.", ex);
+            throw new IOException("Failed to check disk space", ex);
         }
     }
 
@@ -980,7 +980,7 @@ public sealed class FileStorage : IFileStorage
                 return false;
             }
         }
-        LogMessage($"Failed to delete file '{sPath}' after {iMaxRetries} attempts.");
+        LogMessage($"Failed to delete file '{sPath}' after {iMaxRetries} attempts");
         return false;
     }
 
