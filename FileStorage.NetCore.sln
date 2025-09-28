@@ -5,7 +5,7 @@ VisualStudioVersion = 17.13.35931.197
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FileStorage.NetCore", "FileStorage.NetCore\FileStorage.NetCore.csproj", "{9A09E1CC-8B12-41DB-BB1C-B7C24E5D38A9}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FileStorageTest", "TestProject1\FileStorageTest.csproj", "{6FD13B89-D203-4B60-8F94-3F7C66FF902B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FileStorageTest", "FileStorageTest\FileStorageTest.csproj", "{6FD13B89-D203-4B60-8F94-3F7C66FF902B}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
