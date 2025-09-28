@@ -13,6 +13,7 @@ using System.Text.Json.Serialization;
 using System.Linq;
 using System.Buffers;
 using System.Threading.Channels;
+using System.Security.Cryptography;
 
 public sealed class FileStorage : IFileStorage
 {
@@ -31,6 +32,9 @@ public sealed class FileStorage : IFileStorage
     private const int _DefaultBufferSize = 8192;
     private const long _MaxFileSize = 100 * 1024 * 1024;
     private readonly uint _MaxActiveRefMinutes;
+    private readonly SemaphoreSlim _IoSemaphore = new SemaphoreSlim(Environment.ProcessorCount * 4);
+    private ImmutableDictionary<Guid, DateTime> _RecentFiles = ImmutableDictionary<Guid, DateTime>.Empty;
+    private ImmutableQueue<Action> _PendingActions = ImmutableQueue<Action>.Empty;
 
     private readonly record struct FileIndexEntry(string FileId, DateTime CreateDate);
 
@@ -335,7 +339,8 @@ public sealed class FileStorage : IFileStorage
             {
                 var dtCutoff = DateTime.UtcNow - TimeSpan.FromMinutes(_DeleteEveryMinutes);
                 var dtForceDeleteCutoff = DateTime.UtcNow - TimeSpan.FromMinutes(_DeleteEveryMinutes + _MaxActiveRefMinutes);
-                _Logger.LogMessage($"Cleanup started. Cutoff: {dtCutoff}, Force: {dtForceDeleteCutoff}");
+                var dtRecentCutoff = DateTime.UtcNow - TimeSpan.FromMinutes(1);
+                _Logger.LogMessage($"Cleanup started. Cutoff: {dtCutoff}, Force: {dtForceDeleteCutoff}, Recent: {dtRecentCutoff}");
 
                 RemoveStaleEntries();
 
@@ -353,16 +358,19 @@ public sealed class FileStorage : IFileStorage
 
                 foreach (var oEntry in lstEntriesToDelete)
                 {
-                    string sFilePath = Path.Combine(_StoragePath, oEntry.FileId + ".dat");
-                    if (DeleteFileAndRemoveFromIndex(sFilePath, oEntry))
+                    if (oEntry.CreateDate < dtRecentCutoff)
                     {
-                        iDeletedCount++;
-                        _Logger.LogMessage($"SUCCESSFULLY deleted: {oEntry.FileId}");
-                    }
-                    else
-                    {
-                        iFailedCount++;
-                        _Logger.LogMessage($"FAILED to delete: {oEntry.FileId}");
+                        string sFilePath = Path.Combine(_StoragePath, oEntry.FileId + ".dat");
+                        if (DeleteFileAndRemoveFromIndex(sFilePath, oEntry))
+                        {
+                            iDeletedCount++;
+                            _Logger.LogMessage($"SUCCESSFULLY deleted: {oEntry.FileId}");
+                        }
+                        else
+                        {
+                            iFailedCount++;
+                            _Logger.LogMessage($"FAILED to delete: {oEntry.FileId}");
+                        }
                     }
                 }
 
@@ -380,15 +388,18 @@ public sealed class FileStorage : IFileStorage
                             DateTime dtCreated = GetFileCreationTime(oFileInfo);
                             if (dtCreated < dtForceDeleteCutoff || dtCreated < dtCutoff)
                             {
-                                if (SafeDeleteFile(oFileInfo.FullName))
+                                if (dtCreated < dtRecentCutoff)
                                 {
-                                    iDeletedCount++;
-                                    _Logger.LogMessage($"Deleted old file not in index: {sFileName}");
-                                }
-                                else
-                                {
-                                    iFailedCount++;
-                                    _Logger.LogMessage($"Failed to delete file not in index: {sFileName}");
+                                    if (SafeDeleteFile(oFileInfo.FullName))
+                                    {
+                                        iDeletedCount++;
+                                        _Logger.LogMessage($"Deleted old file not in index: {sFileName}");
+                                    }
+                                    else
+                                    {
+                                        iFailedCount++;
+                                        _Logger.LogMessage($"Failed to delete file not in index: {sFileName}");
+                                    }
                                 }
                             }
                         }
@@ -398,14 +409,17 @@ public sealed class FileStorage : IFileStorage
                 foreach (var oFileInfo in oDirInfo.EnumerateFiles("*.tmp"))
                 {
                     if (oFileInfo.Name.Equals("FileIndex.tmp", StringComparison.OrdinalIgnoreCase)) continue;
-                    if (SafeDeleteFile(oFileInfo.FullName))
+                    if (DateTime.UtcNow - oFileInfo.CreationTimeUtc > TimeSpan.FromMinutes(5))
                     {
-                        iDeletedCount++;
-                        _Logger.LogMessage($"Deleted temp file: {oFileInfo.Name}");
-                    }
-                    else
-                    {
-                        iFailedCount++;
+                        if (SafeDeleteFile(oFileInfo.FullName))
+                        {
+                            iDeletedCount++;
+                            _Logger.LogMessage($"Deleted temp file: {oFileInfo.Name}");
+                        }
+                        else
+                        {
+                            iFailedCount++;
+                        }
                     }
                 }
 
@@ -568,9 +582,9 @@ public sealed class FileStorage : IFileStorage
     {
         private readonly string _LogFilePath;
         private readonly string _StoragePath;
-        private readonly Channel<string> _logChannel;
-        private readonly Task _logWriterTask;
-        private readonly CancellationTokenSource _logCts = new();
+        private readonly Channel<string> _LogChannel;
+        private readonly Task _LogWriterTask;
+        private readonly CancellationTokenSource _LogCts = new();
         private long _CurrentLogFileSize = 0;
         private int _LogEntriesSinceLastCheck = 0;
         private const long _LogRotationThreshold = 5 * 1024 * 1024;
@@ -583,7 +597,7 @@ public sealed class FileStorage : IFileStorage
         {
             _StoragePath = sStoragePath;
             _LogFilePath = Path.Combine(sStoragePath, "FileStorageLogs.log");
-            _logChannel = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
+            _LogChannel = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
 
             if (File.Exists(_LogFilePath))
             {
@@ -598,14 +612,14 @@ public sealed class FileStorage : IFileStorage
             {
                 Interlocked.Exchange(ref _CurrentLogFileSize, 0);
             }
-            _logWriterTask = Task.Run(() => LogWriterLoop(_logCts.Token));
+            _LogWriterTask = Task.Run(() => LogWriterLoop(_LogCts.Token));
         }
 
-        private async Task LogWriterLoop(CancellationToken ct)
+        private async Task LogWriterLoop(CancellationToken oCancellationToken)
         {
-            while (await _logChannel.Reader.WaitToReadAsync(ct))
+            while (await _LogChannel.Reader.WaitToReadAsync(oCancellationToken))
             {
-                while (_logChannel.Reader.TryRead(out string sLogEntry))
+                while (_LogChannel.Reader.TryRead(out string sLogEntry))
                 {
                     WriteLogEntry(sLogEntry);
                 }
@@ -664,7 +678,7 @@ public sealed class FileStorage : IFileStorage
         public void LogMessage(string sMessage)
         {
             string sLogEntry = $"UtcTime:{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}=>LocalTime:{DateTime.Now:yyyy-MM-dd HH:mm:ss}: {sMessage}{Environment.NewLine}";
-            _logChannel.Writer.TryWrite(sLogEntry);
+            _LogChannel.Writer.TryWrite(sLogEntry);
         }
 
         private void CheckAndRotateLog()
@@ -711,9 +725,9 @@ public sealed class FileStorage : IFileStorage
 
         public void Dispose()
         {
-            _logCts.Cancel();
-            _logChannel.Writer.Complete();
-            try { _logWriterTask.Wait(TimeSpan.FromSeconds(2)); } catch { }
+            _LogCts.Cancel();
+            _LogChannel.Writer.Complete();
+            try { _LogWriterTask.Wait(TimeSpan.FromSeconds(2)); } catch { }
         }
     }
 
@@ -832,13 +846,26 @@ public sealed class FileStorage : IFileStorage
         CheckDisposed();
         oCt.ThrowIfCancellationRequested();
         var sFilePath = GetFilePath(gFileId);
+
+        if (!File.Exists(sFilePath))
+        {
+            throw new FileNotFoundException("File not found", sFilePath);
+        }
+
+        if (_RecentFiles.TryGetValue(gFileId, out var createTime) &&
+            DateTime.UtcNow - createTime < TimeSpan.FromSeconds(30))
+        {
+            await Task.Delay(100, oCt);
+        }
+
+        await _IoSemaphore.WaitAsync(oCt).ConfigureAwait(false);
         try
         {
             return new ReferenceCountedFileStream(this, gFileId, sFilePath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, _DefaultBufferSize, FileOptions.Asynchronous | FileOptions.SequentialScan);
         }
-        catch (FileNotFoundException ex)
+        finally
         {
-            throw new FileNotFoundException("File not found", sFilePath, ex);
+            _IoSemaphore.Release();
         }
     }
 
@@ -875,14 +902,22 @@ public sealed class FileStorage : IFileStorage
         _ReferenceManager.IncrementRef(gFileId);
         try
         {
-            return await ExecuteWithRetryAsync(async () =>
+            await _IoSemaphore.WaitAsync(oCt).ConfigureAwait(false);
+            try
             {
-                int iBufferSize = GetOptimizedBufferSize(lFileSize);
-                using (var oStream = new FileStream(sFilePath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, iBufferSize, FileOptions.Asynchronous | FileOptions.SequentialScan))
+                return await ExecuteWithRetryAsync(async () =>
                 {
-                    return await ReadAllBytesAsync(oStream, lFileSize, oCt);
-                }
-            }, oCt);
+                    int iBufferSize = GetOptimizedBufferSize(lFileSize);
+                    using (var oStream = new FileStream(sFilePath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, iBufferSize, FileOptions.Asynchronous | FileOptions.SequentialScan))
+                    {
+                        return await ReadAllBytesAsync(oStream, lFileSize, oCt);
+                    }
+                }, oCt);
+            }
+            finally
+            {
+                _IoSemaphore.Release();
+            }
         }
         finally
         {
@@ -938,19 +973,30 @@ public sealed class FileStorage : IFileStorage
         _ReferenceManager.IncrementRef(gFileId);
         try
         {
-            ExecuteWithRetry(() =>
+            _IoSemaphore.Wait();
+            try
             {
-                using (var oFs = new FileStream(sTempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, iBufferSize, FileOptions.SequentialScan))
+                ExecuteWithRetry(() =>
                 {
-                    oStream.CopyTo(oFs, iBufferSize);
-                }
-                File.Move(sTempPath, sFinalPath);
-                _IndexManager.AddToIndex(gFileId, DateTime.UtcNow);
-            });
+                    using (var oFs = new FileStream(sTempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, iBufferSize, FileOptions.SequentialScan | FileOptions.WriteThrough))
+                    {
+                        oStream.CopyTo(oFs, iBufferSize);
+                        oFs.Flush(true);
+                    }
+                    ImmutableInterlocked.Update(ref _RecentFiles, dict => dict.SetItem(gFileId, DateTime.UtcNow));
+                    File.Move(sTempPath, sFinalPath);
+                    _IndexManager.AddToIndex(gFileId, DateTime.UtcNow);
+                });
+            }
+            finally
+            {
+                _IoSemaphore.Release();
+            }
         }
         catch
         {
             SafeDeleteFile(sTempPath);
+            ImmutableInterlocked.Update(ref _RecentFiles, dict => dict.Remove(gFileId));
             throw;
         }
         finally
@@ -974,19 +1020,30 @@ public sealed class FileStorage : IFileStorage
         _ReferenceManager.IncrementRef(gFileId);
         try
         {
-            await ExecuteWithRetryAsync(async () =>
+            await _IoSemaphore.WaitAsync(oCt).ConfigureAwait(false);
+            try
             {
-                await using (var oFs = new FileStream(sTempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, iBufferSize, FileOptions.Asynchronous | FileOptions.SequentialScan))
+                await ExecuteWithRetryAsync(async () =>
                 {
-                    await oStream.CopyToAsync(oFs, iBufferSize, oCt).ConfigureAwait(false);
-                }
-                File.Move(sTempPath, sFinalPath);
-                _IndexManager.AddToIndex(gFileId, DateTime.UtcNow);
-            }, oCt).ConfigureAwait(false);
+                    await using (var oFs = new FileStream(sTempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, iBufferSize, FileOptions.Asynchronous | FileOptions.SequentialScan | FileOptions.WriteThrough))
+                    {
+                        await oStream.CopyToAsync(oFs, iBufferSize, oCt).ConfigureAwait(false);
+                        await oFs.FlushAsync(oCt).ConfigureAwait(false);
+                    }
+                    ImmutableInterlocked.Update(ref _RecentFiles, dict => dict.SetItem(gFileId, DateTime.UtcNow));
+                    File.Move(sTempPath, sFinalPath);
+                    _IndexManager.AddToIndex(gFileId, DateTime.UtcNow);
+                }, oCt).ConfigureAwait(false);
+            }
+            finally
+            {
+                _IoSemaphore.Release();
+            }
         }
         catch
         {
             SafeDeleteFile(sTempPath);
+            ImmutableInterlocked.Update(ref _RecentFiles, dict => dict.Remove(gFileId));
             throw;
         }
         finally
@@ -1000,6 +1057,13 @@ public sealed class FileStorage : IFileStorage
     {
         if (_Disposed != 0) return;
         if (Interlocked.CompareExchange(ref _CleanupRunning, 1, 0) != 0) return;
+
+        if (_Disposed != 0)
+        {
+            Interlocked.Exchange(ref _CleanupRunning, 0);
+            return;
+        }
+
         _CleanupCompleted.Reset();
         try
         {
@@ -1007,6 +1071,15 @@ public sealed class FileStorage : IFileStorage
             _CleanupManager.CleanupTempIndexFiles();
             _CleanupManager.CleanupOrphanedReferences();
             _CleanupManager.CleanupOldFiles();
+
+            // Cleanup recent files that are old
+            var oldFiles = _RecentFiles.Where(kv => DateTime.UtcNow - kv.Value > TimeSpan.FromMinutes(5))
+                .Select(kv => kv.Key)
+                .ToImmutableList();
+            foreach (var fileId in oldFiles)
+            {
+                ImmutableInterlocked.Update(ref _RecentFiles, dict => dict.Remove(fileId));
+            }
         }
         catch (Exception ex)
         {
@@ -1198,6 +1271,7 @@ public sealed class FileStorage : IFileStorage
             _oCleanupTimer.Dispose();
             _Logger.Dispose();
             if (_CleanupRunning != 0) _CleanupCompleted.Wait(TimeSpan.FromSeconds(5));
+            _IoSemaphore.Dispose();
         }
         catch (Exception ex)
         {
